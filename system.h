@@ -12,12 +12,19 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/sendfile.h>
+#include <sys/wait.h>
+#include <signal.h>
+#include <time.h>
+#include <netdb.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 
 /*
  * fork
  */
 #include <unistd.h>
 #include <cstdio>
+#include <iostream>
 #include <cstdlib>
 /*
  *
@@ -34,5 +41,8 @@
 #include <string>
 #include <fstream>
 #include <cstdarg>
+#include <sstream>
+#include <map>
+//#include <unordered_map>
 
 #endif

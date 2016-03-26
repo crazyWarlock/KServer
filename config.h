@@ -1,15 +1,13 @@
 
 typedef unsigned int uint32_t;
 
-const unsigned char _SERVER_ADDRESS[4]={202,120,40,229};
-const uint32_t SERVER_ADDRESS = (
-		_SERVER_ADDRESS[3]+
-		_SERVER_ADDRESS[2]<<8+
-		_SERVER_ADDRESS[1]<<16+
-		_SERVER_ADDRESS[0]<<24);
-
+const unsigned int BUFFER_SIZE = 8192; //8KBytes
 const unsigned short SERVER_PORT = 8080;
-const int backlog = 60;
-const char* log_file = "/home/yan/server/log.txt";
-const char* WEB_ROOT = "/home/yan/www";
-const char* APP_ROOT = "blog";
+const int backlog = 60; //hold 60 access simutaneously
+const char log_file[] = "/home/yan/KServer/log.txt";
+const char WEB_ROOT[] = "/home/yan/www";
+const char APP_ROOT[] = "blog";
+const char DEFAULT_URI[] = "index.php";
+const char CGI_PATH[] = "/usr/bin/php5-cgi";
+const unsigned int MAX_PARAMS = 1024;
+

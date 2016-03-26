@@ -8,26 +8,27 @@
 #ifndef LOGGER_H_
 #define LOGGER_H_
 
-#include "system.h"
-
 class Logger {
 public:
+	/*
 	static Logger* getInstance(){
-		if(instance == NULL){
+		if(!instance){
 			return new Logger();
 		}else{
 			return instance;
 		}
-	}
+	}*/
 
-	virtual ~Logger();
-
-	static void sys_err();
+	void logtime();
+    static void log(char* fmt, ...);
+	
+	~Logger();
 
 private:
 	Logger();
-
-	Logger *instance;
+	
+	static int filefd;
+	//static Logger *instance;
 };
 
 #endif /* LOGGER_H_ */

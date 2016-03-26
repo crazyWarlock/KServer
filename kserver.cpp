@@ -1,18 +1,32 @@
 #include "config.h"
+#include "KSPHP.h"
 #include "kserver.h"
+#include "logger.h"
 #include <ctime>
 #include <cstdio>
+#include <map>
 #include <unistd.h>
 using namespace std;
 
+void handler(int sig){
+	pid_t pid;
+	while((pid = waitpid(-1, NULL, 0)) > 0){
+		;
+	}
+	return;
+}
+
 KServer::KServer(){
-	this->start_server();
+    start_server();
 }
 
 void KServer::start_server()
 {
-	int sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	Logger::log("Start server. \n");
+	signal(SIGCHLD, handler);
 
+	on = true;
+	int sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	struct sockaddr_in servaddr;
 	memset(&servaddr, 0, sizeof(servaddr));
 	servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -23,24 +37,31 @@ void KServer::start_server()
 
 	listen(sockfd, backlog);
 
-	while(1){
-		int connectfd = accept(sockfd, (struct sockaddr *)NULL, NULL);
+	while(on){
+		struct sockaddr_in clientaddr;
+		unsigned int clientlen;
+		int connectfd = accept(sockfd, 
+				(struct sockaddr *)(&clientaddr), 
+				&clientlen);
+	//	struct hostent *hp = gethostbyaddr((const char*)&clientaddr.sin_addr.s_addr, sizeof(clientaddr.sin_addr.s_addr), AF_INET);
+	//	char* haddrp = inet_ntoa(clientaddr.sin_addr);
+	//	Logger::log("server connected to %s (%s)\n", hp->h_name, haddrp);
 
+		//accept successfully
 		if(connectfd >= 0){
 			pid_t pid;
 
 			//child process
 			if((pid = fork()) == 0){
 				close(sockfd);		//child closed listening socket
-				this->handleRequest(connectfd);
+				handleRequest(connectfd);
 				close(connectfd);
 				exit(0);
 			}
-
 			//parent process
 			close(connectfd);
-
 		}
+	//	waitpid(-1, NULL, WNOHANG);
 	}
 }
 
@@ -109,16 +130,17 @@ void KServer::start_server()
        extension-header = message-header
  */
 void KServer::handleRequest(int sockfd){
-
 	ssize_t n;
-	char buf[8192];
+	char buf[BUFFER_SIZE];
 	string method;
 	string request_uri;
 
 	memset(buf, 0, sizeof(buf));
 
-	read(sockfd, buf, 8192);
-//	printf("%s\n", buf);
+	read(sockfd, buf, BUFFER_SIZE);
+#ifdef DEBUG
+	printf("%s\n", buf);
+#endif
 
 	//decode Request-Line
 	int i = 0;
@@ -139,29 +161,81 @@ void KServer::handleRequest(int sockfd){
 		}
 	}
 
+#ifdef DEBUG
 	printf("%s %s\n", method.c_str(), request_uri.c_str());
+#endif
+
 
 	if(method != "GET" && method != "POST"){
+#ifdef DEBUG
 		printf("Error: %s is not a valid method\n", method.c_str());
+#endif
+		return;
 	}
 
-	string _webroot(WEB_ROOT, strlen(WEB_ROOT));
-	string _approot(APP_ROOT, strlen(APP_ROOT));
+	string _webroot(WEB_ROOT);
+	string _approot(APP_ROOT);
 	string path = _webroot + '/' + _approot;
-
+	
 	if(request_uri == "/"){
-		request_uri = "/index.html";
+		request_uri = "/" + string(DEFAULT_URI);
 	}
-
 
 	if(method == "GET"){
-		this->handleGET(sockfd, path, request_uri);
+		handleGET(sockfd, path, request_uri);
+	}else{
+		string req(buf);
+		size_t found = req.find_last_of('\n');
+		string pdata = req.substr(found+1);
+#ifdef DEBUG
+		printf("%s\n", pdata.c_str());
+#endif
+
+		handlePOST(sockfd, path, request_uri, pdata);
 	}
-//	char timebuffer[129];
-//	time_t currentTime = time(NULL);
-//	snprintf(timebuffer, 128, "%s\n", ctime(&currentTime));
-//	write(sockfd, timebuffer, strlen(timebuffer));
 }
+
+void KServer::handlePOST(int sockfd, string path, string filename, string pdata){
+	string file = path + filename;
+
+	char* argvs[MAX_PARAMS];
+	argvs[0] = const_cast<char*>(CGI_PATH);
+	argvs[1] = const_cast<char*>(file.c_str());
+
+	stringstream ss;
+	ss<<pdata.length();
+	string clen, sname;
+	ss>>clen;
+	clen = "CONTENT_LENGTH=" + clen;
+	sname = "SCRIPT_FILENAME="+file;
+
+	char* tmp = (char*)pdata.c_str();
+	int fds[2];
+	pipe(fds);
+	dup2(fds[0], STDIN_FILENO);
+	write(fds[1], tmp, strlen(tmp));
+	close(fds[1]);
+
+//	istringstream stream(pdata.c_str());
+//	cin.rdbuf(stream.rdbuf());
+//	string tss;
+//	cin>>tss;
+//	cout<<tss<<endl;
+
+	char* env[] = {
+			"REQUEST_METHOD=POST",
+			"REDIRECT_STATUS=CGI",
+			const_cast<char*>(clen.c_str()),
+			const_cast<char*>(sname.c_str()),
+			"CONTENT_TYPE=application/x-www-form-urlencoded",
+			0
+	};
+
+	fdprintf(sockfd, "HTTP/1.0 200 OK\r\n");
+	dup2(sockfd, STDOUT_FILENO);
+	execve(argvs[0], argvs, env);
+}
+
 /*
  * Response      = Status-Line
                    *(( general-header
@@ -220,21 +294,52 @@ void KServer::handleRequest(int sockfd){
  */
 void KServer::handleGET(int sockfd, string path, string filename)
 {
-	off_t offset = 0;
-	int filefd = open((path + filename).c_str(), O_RDONLY);
+	size_t count = 0;
+	string file = path + filename;
+	string uri = file;
+	string get_param = file.substr(file.find('?')+1);
+	file = file.substr(0, file.find('?'));
+	const char *ext = strrchr(file.c_str(), '.');
+	const char *mimetype;
 
+	int filefd = open(file.c_str(), O_RDONLY);
 	if(filefd < 0){
-		http_err(sockfd, 404, "<h2>404 Not Found</h2><br>File %s does not exist.", filename.c_str());
+		http_err(sockfd, 404, "<h2>404 Not Found</h1><br>File %s does not exist.", filename.c_str());
 		return;
 	}
-
-	const char *ext = strrchr(filename.c_str(), '.');
-	const char *mimetype = "text/html";
-	if(ext && !strcmp(ext, ".css")){
+	
+	if(!strcmp(ext, ".html")){
+		mimetype = "text/html";
+	}else if(!strcmp(ext, ".css")){
 		mimetype = "text/css";
-	}
-	if(ext && !strcmp(ext, ".jpg")){
-		mimetype = "text/jpeg";
+	}else if(!strcmp(ext, ".jpg") || 
+			!strcmp(ext, ".jpeg") ||
+			!strcmp(ext, ".jpe")){
+		mimetype = "image/jpeg";
+	}else if(!strcmp(ext, ".js")){
+		mimetype = "application/x-javascript";
+	}else if(!strcmp(ext, ".php")){
+		char* argvs[MAX_PARAMS];
+		argvs[0] = const_cast<char*>(CGI_PATH);
+		argvs[1] = const_cast<char*>(file.c_str());
+	
+
+		string sname = "SCRIPT_FILENAME="+file;
+		string qstring = "QUERY_STRING="+get_param;
+
+		//cout<<file<<" "<<sname<<" "<<qstring<<endl;
+		char* env[] = {
+			"REQUEST_METHOD=GET",
+			"REDIRECT_STATUS=CGI",
+			const_cast<char*>(sname.c_str()),
+			const_cast<char*>(qstring.c_str()),
+			0
+		};
+
+		fdprintf(sockfd, "HTTP/1.0 200 OK\r\n");
+		dup2(sockfd, STDOUT_FILENO);
+		execve(argvs[0], argvs, env);
+		return;
 	}
 
 	fdprintf(sockfd, "HTTP/1.0 200 OK\r\n");
@@ -243,17 +348,22 @@ void KServer::handleGET(int sockfd, string path, string filename)
 
 	struct stat st;
 	if (!fstat(filefd, &st))
-		offset = st.st_size;
-	if (sendfile(sockfd, filefd, 0, offset) < 0){
-		printf("System Error\n");
+		count = st.st_size;
+	if (sendfile(sockfd, filefd, 0, count) < 0){
+		perror("System Error\n");
 	}
 	close(filefd);
+	close(sockfd);
+}
+
+int KServer::handleMD(string file){
+
 }
 
 void KServer::http_err(int fd, int code, char *fmt, ...)
 {
 	fdprintf(fd, "HTTP/1.0 %d Error\r\n", code);
-	fdprintf(fd, "Content-Type: text\html\r\n");
+	fdprintf(fd, "Content-Type: text/html\r\n");
 	fdprintf(fd, "\r\n");
 	fdprintf(fd, "<h1>An error occurred</h1>\r\n");
 
