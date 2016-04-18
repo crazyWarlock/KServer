@@ -20,6 +20,34 @@ KServer::KServer(){
     start_server();
 }
 
+void KServer::init_pool(int sockfd){
+	pool->maxi = -1;
+	for(int i = 0; i < FD_SETSIZE; i ++){
+		pool->clientfd[i] = -1;
+	}
+	pool->maxfd = sockfd;
+	FD_ZERO(&pool->read_set);
+	FD_SET(sockfd, &pool->read_set);
+}
+
+void KServer::add_client(int sockfd){
+	int i;
+	for(i = 0; i < FD_SETSIZE; i ++){
+		if(pool->clientfd[i] < 0){
+			pool->clientfd[i] = sockfd;
+
+			FD_SET(sockfd, &pool->read_set);
+
+			if(sockfd > pool->maxfd)
+				pool->maxfd = sockfd;
+			if(i > pool->maxi)
+				pool->maxi = i;
+		}
+	}
+	if(i == FD_SETSIZE)
+		perror("add_client error: Too many clients");
+}
+
 void KServer::start_server()
 {
 	Logger::log("Start server. \n");
@@ -27,25 +55,37 @@ void KServer::start_server()
 
 	on = true;
 	int sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+
+	int optval = 1;
+	if(setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0){
+		perror("setsocketopt");
+		return;
+	}
+
 	struct sockaddr_in servaddr;
 	memset(&servaddr, 0, sizeof(servaddr));
 	servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
 	servaddr.sin_family = AF_INET;
 	servaddr.sin_port = htons(SERVER_PORT);
 
-	bind(sockfd, (struct sockaddr*)&servaddr, sizeof(servaddr));
+
+	if(bind(sockfd, (struct sockaddr*)&servaddr, sizeof(servaddr))<0){
+		perror("bind");
+		return;
+	}
 
 	listen(sockfd, backlog);
+
 
 	while(on){
 		struct sockaddr_in clientaddr;
 		unsigned int clientlen;
-		int connectfd = accept(sockfd, 
-				(struct sockaddr *)(&clientaddr), 
+		int connectfd = accept(sockfd,
+				(struct sockaddr *)(&clientaddr),
 				&clientlen);
-	//	struct hostent *hp = gethostbyaddr((const char*)&clientaddr.sin_addr.s_addr, sizeof(clientaddr.sin_addr.s_addr), AF_INET);
-	//	char* haddrp = inet_ntoa(clientaddr.sin_addr);
-	//	Logger::log("server connected to %s (%s)\n", hp->h_name, haddrp);
+		struct hostent *hp = gethostbyaddr((const char*)&clientaddr.sin_addr.s_addr, sizeof(clientaddr.sin_addr.s_addr), AF_INET);
+		char* haddrp = inet_ntoa(clientaddr.sin_addr);
+		Logger::log("server connected to %s\n", haddrp);
 
 		//accept successfully
 		if(connectfd >= 0){
@@ -181,6 +221,7 @@ void KServer::handleRequest(int sockfd){
 		request_uri = "/" + string(DEFAULT_URI);
 	}
 
+	Logger::log("%s %s\n", method.c_str(), request_uri.c_str());
 	if(method == "GET"){
 		handleGET(sockfd, path, request_uri);
 	}else{

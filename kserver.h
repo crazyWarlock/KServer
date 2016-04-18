@@ -3,6 +3,15 @@
 
 #include "system.h"
 
+struct Pool{
+	int maxfd;
+	fd_set read_set;
+	fd_set ready_set;
+	int nready;
+	int maxi;
+	int clientfd[FD_SETSIZE];
+};
+
 class KServer
 {
 public:
@@ -18,10 +27,13 @@ public:
 
     int handleMD(std::string);
     inline void close_server(){ on = false; }
+
+    void init_pool(int);
 private:
     void start_server();
-	
+    void add_client(int);
 private:
     bool on;
+    Pool* pool;
 };
 #endif
